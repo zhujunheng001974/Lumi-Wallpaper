@@ -1,2 +1,3 @@
 # Lumi-Wallpaper
 * Lumi Wallpaper 是一款 macOS 壁纸管理 App，支持图片、视频，提供 20 张 4K 精选壁纸和自定义上传。支持多桌面同步、动态视频壁纸、画面校准（自动填充、完整显示、拉伸）和删除功能。视频壁纸需 App 运行，多桌面同步需切换后更新，校准设置全局。
+⚠️：暂时仅限 MACBOOK 可使用 ⚠️：Temporarily only available for use on MACBOOKS. （仅支持 中文）(Only supports Chinese)
