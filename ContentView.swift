@@ -9,17 +9,28 @@ struct ContentView: View {
     @State private var showingImporter = false
     @State private var searchText = ""
     @State private var filter: LibraryFilter = .all
+    @State private var category: String? = nil          // 风格分类（nil = 全部风格）
+    @AppStorage("Lumi.language") private var language = "zh"   // zh / en
     @State private var itemToDelete: WallpaperItem?
     @State private var videoSizes: [UUID: CGSize] = [:]   // 异步读取到的视频尺寸
 
     enum LibraryFilter: String, CaseIterable {
         case all = "全部壁纸", builtIn = "精选壁纸", personal = "我的上传"
+
+        var title: String {
+            switch self {
+            case .all: return tr("全部壁纸", "All Wallpapers")
+            case .builtIn: return tr("精选壁纸", "Featured")
+            case .personal: return tr("我的上传", "My Uploads")
+            }
+        }
     }
 
     private var filteredItems: [WallpaperItem] {
         library.items.filter { item in
             let matchesFilter = filter == .all || (filter == .builtIn && item.kind == .builtIn) || (filter == .personal && item.kind != .builtIn)
-            return matchesFilter && (searchText.isEmpty || item.title.localizedCaseInsensitiveContains(searchText))
+            let matchesCategory = filter == .personal || category == nil || item.category == category
+            return matchesFilter && matchesCategory && (searchText.isEmpty || item.title.localizedCaseInsensitiveContains(searchText) || item.displayTitle.localizedCaseInsensitiveContains(searchText))
         }
     }
 
@@ -34,16 +45,16 @@ struct ContentView: View {
         .fileImporter(isPresented: $showingImporter, allowedContentTypes: [.image, .movie], allowsMultipleSelection: true) { result in
             switch result {
             case .success(let urls): library.importFiles(urls)
-            case .failure(let error): library.statusMessage = "选择文件失败：\(error.localizedDescription)"
+            case .failure(let error): library.statusMessage = tr("选择文件失败：", "Couldn't choose files: ") + error.localizedDescription
             }
         }
-        .alert("删除这个壁纸？",
+        .alert(tr("删除这个壁纸？", "Delete this wallpaper?"),
                isPresented: Binding(get: { itemToDelete != nil }, set: { if !$0 { itemToDelete = nil } }),
                presenting: itemToDelete) { item in
-            Button("删除", role: .destructive) { library.delete(item) }
-            Button("取消", role: .cancel) {}
+            Button(tr("删除", "Delete"), role: .destructive) { library.delete(item) }
+            Button(tr("取消", "Cancel"), role: .cancel) {}
         } message: { item in
-            Text("“\(item.title)”会从图库和这台 Mac 的存储中永久删除，无法恢复。")
+            Text(tr("“\(item.displayTitle)”会从图库和这台 Mac 的存储中永久删除，无法恢复。", "“\(item.displayTitle)” will be permanently deleted from the library and this Mac. This can't be undone."))
         }
     }
 
@@ -68,37 +79,67 @@ struct ContentView: View {
                 .frame(width: 44, height: 44)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Lumi Wallpaper").font(.system(size: 16, weight: .bold))
-                    Text("桌面灵感库").font(.system(size: 11)).foregroundStyle(.white.opacity(0.48))
+                    Text(tr("桌面灵感库", "Desktop inspiration")).font(.system(size: 11)).foregroundStyle(.white.opacity(0.48))
                 }
             }
             VStack(alignment: .leading, spacing: 8) {
-                Text("你的空间").font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.38)).padding(.leading, 12)
-                sidebarButton("square.grid.2x2.fill", "壁纸图库", selected: filter == .all) { filter = .all }
-                sidebarButton("sparkles", "精选壁纸", selected: filter == .builtIn) { filter = .builtIn }
-                sidebarButton("photo.stack.fill", "我的上传", selected: filter == .personal) { filter = .personal }
+                Text(tr("你的空间", "Your space")).font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.38)).padding(.leading, 12)
+                sidebarButton("square.grid.2x2.fill", tr("壁纸图库", "Gallery"), selected: filter == .all) { filter = .all }
+                sidebarButton("sparkles", tr("精选壁纸", "Featured"), selected: filter == .builtIn) { filter = .builtIn }
+                sidebarButton("photo.stack.fill", tr("我的上传", "My Uploads"), selected: filter == .personal) { filter = .personal }
             }
             VStack(alignment: .leading, spacing: 12) {
-                Text("快速操作").font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.38)).padding(.leading, 12)
+                Text(tr("快速操作", "Quick actions")).font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.38)).padding(.leading, 12)
                 Button { showingImporter = true } label: {
                     HStack(spacing: 10) {
                         Image(systemName: "plus.circle.fill").font(.system(size: 17))
-                        Text("上传照片 / 视频").font(.system(size: 13, weight: .semibold))
+                        Text(tr("上传照片 / 视频", "Upload photos / videos")).font(.system(size: 13, weight: .semibold))
                     }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 13).padding(.vertical, 13)
                         .background(LinearGradient(colors: [.blue.opacity(0.85), .purple.opacity(0.85)], startPoint: .leading, endPoint: .trailing), in: RoundedRectangle(cornerRadius: 13))
                 }.buttonStyle(.plain)
                 Button { library.restoreDesktop() } label: {
-                    Label("恢复原桌面", systemImage: "arrow.uturn.backward")
+                    Label(tr("恢复原桌面", "Restore original"), systemImage: "arrow.uturn.backward")
                         .font(.system(size: 13, weight: .medium)).foregroundStyle(.white.opacity(0.72))
                         .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 13).padding(.vertical, 12)
                 }.buttonStyle(.plain)
             }
             Spacer()
+            VStack(alignment: .leading, spacing: 12) {
+                languageToggle
             VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 6) { Circle().fill(.green).frame(width: 6, height: 6); Text("本地图库已启用").font(.system(size: 11, weight: .medium)).foregroundStyle(.white.opacity(0.62)) }
-                Text("导入的文件会保存在这台 Mac 上").font(.system(size: 10)).foregroundStyle(.white.opacity(0.34)).fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 6) { Circle().fill(.green).frame(width: 6, height: 6); Text(tr("本地图库已启用", "Local library on")).font(.system(size: 11, weight: .medium)).foregroundStyle(.white.opacity(0.62)) }
+                Text(tr("导入的文件会保存在这台 Mac 上", "Imported files are stored on this Mac")).font(.system(size: 10)).foregroundStyle(.white.opacity(0.34)).fixedSize(horizontal: false, vertical: true)
             }.padding(12).frame(maxWidth: .infinity, alignment: .leading).background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 13))
+            }
         }
         .padding(22).frame(width: 235).background(Color.white.opacity(0.018))
+    }
+
+    // MARK: - 语言切换（中文 / English）
+
+    private var languageToggle: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "globe").font(.system(size: 12)).foregroundStyle(.white.opacity(0.5))
+            HStack(spacing: 0) {
+                languageSegment("中文", code: "zh")
+                languageSegment("English", code: "en")
+            }
+            .padding(3)
+            .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 11))
+        }
+    }
+
+    private func languageSegment(_ title: String, code: String) -> some View {
+        let selected = language == code
+        return Button {
+            language = code
+            library.statusMessage = tr("准备好为桌面换个新样子", "Ready to give your desktop a new look")
+        } label: {
+            Text(title).font(.system(size: 11, weight: .semibold))
+                .frame(maxWidth: .infinity).padding(.vertical, 7)
+                .foregroundStyle(selected ? Color.black.opacity(0.85) : Color.white.opacity(0.6))
+                .background(selected ? Color.white : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+        }.buttonStyle(.plain)
     }
 
     private func sidebarButton(_ icon: String, _ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
@@ -120,16 +161,16 @@ struct ContentView: View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("让桌面，成为你的风格").font(.system(size: 25, weight: .bold, design: .rounded))
-                    Text("挑选一张喜欢的壁纸，或把自己的照片和视频放进来。").font(.system(size: 12)).foregroundStyle(.white.opacity(0.48))
+                    Text(tr("让桌面，成为你的风格", "Make your desktop yours")).font(.system(size: 25, weight: .bold, design: .rounded))
+                    Text(tr("挑选一张喜欢的壁纸，或把自己的照片和视频放进来。", "Pick a wallpaper you love, or bring in your own photos and videos.")).font(.system(size: 12)).foregroundStyle(.white.opacity(0.48))
                 }
                 Spacer()
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass").foregroundStyle(.white.opacity(0.42))
-                    TextField("搜索壁纸", text: $searchText).textFieldStyle(.plain).frame(width: 145)
+                    TextField(tr("搜索壁纸", "Search wallpapers"), text: $searchText).textFieldStyle(.plain).frame(width: 145)
                 }.padding(11).background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
                 Button { showingImporter = true } label: {
-                    Label("上传", systemImage: "plus").font(.system(size: 12, weight: .semibold)).padding(.horizontal, 15).padding(.vertical, 11)
+                    Label(tr("上传", "Upload"), systemImage: "plus").font(.system(size: 12, weight: .semibold)).padding(.horizontal, 15).padding(.vertical, 11)
                         .background(.white, in: RoundedRectangle(cornerRadius: 11)).foregroundStyle(Color.black.opacity(0.85))
                 }.buttonStyle(.plain)
             }.padding(.horizontal, 30).padding(.top, 30).padding(.bottom, 22)
@@ -144,14 +185,15 @@ struct ContentView: View {
                     }
                     HStack(alignment: .center) {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(filter.rawValue).font(.system(size: 18, weight: .bold))
-                            Text("\(filteredItems.count) 张壁纸 · 点击卡片查看预览").font(.system(size: 11)).foregroundStyle(.white.opacity(0.42))
+                            Text(filter.title).font(.system(size: 18, weight: .bold))
+                            Text(tr("\(filteredItems.count) 张壁纸 · 点击卡片查看预览", "\(filteredItems.count) wallpapers · click a card to preview")).font(.system(size: 11)).foregroundStyle(.white.opacity(0.42))
                         }
                         Spacer()
-                        Picker("分类", selection: $filter) {
-                            ForEach(LibraryFilter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                        Picker(tr("分类", "Category"), selection: $filter) {
+                            ForEach(LibraryFilter.allCases, id: \.self) { Text($0.title).tag($0) }
                         }.pickerStyle(.segmented).frame(width: 260)
                     }
+                    if filter != .personal { categoryChips }
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 190), spacing: 15)], spacing: 17) {
                         ForEach(filteredItems) { item in
                             WallpaperCard(item: item, selected: library.selectedID == item.id, active: library.activeID == item.id,
@@ -170,6 +212,35 @@ struct ContentView: View {
                 Text("LUMI · DESKTOP STUDIO").font(.system(size: 9, weight: .bold, design: .monospaced)).tracking(1.2).foregroundStyle(.white.opacity(0.25))
             }.padding(.horizontal, 30).padding(.vertical, 12).background(.black.opacity(0.12))
         }
+    }
+
+    // MARK: - 风格分类标签
+
+    private var categoryChips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 9) {
+                categoryChip(tr("全部风格", "All styles"), icon: "square.grid.2x2.fill", value: nil)
+                ForEach(WallpaperLibrary.categoryOrder, id: \.self) { name in
+                    categoryChip(localizedCategory(name), icon: WallpaperLibrary.categoryIcons[name] ?? "sparkles", value: name)
+                }
+            }
+        }
+    }
+
+    private func categoryChip(_ title: String, icon: String, value: String?) -> some View {
+        let selected = category == value
+        let count = library.items.filter { $0.kind == .builtIn && (value == nil || $0.category == value) }.count
+        return Button { category = value } label: {
+            HStack(spacing: 6) {
+                Image(systemName: icon).font(.system(size: 11))
+                Text(title)
+                Text("\(count)").foregroundStyle(selected ? Color.black.opacity(0.4) : Color.white.opacity(0.4))
+            }
+            .font(.system(size: 12, weight: selected ? .semibold : .regular))
+            .foregroundStyle(selected ? Color.black.opacity(0.85) : Color.white.opacity(0.7))
+            .padding(.horizontal, 13).padding(.vertical, 8)
+            .background(selected ? Color.white : Color.white.opacity(0.07), in: Capsule())
+        }.buttonStyle(.plain)
     }
 
     // MARK: - 画面校准
@@ -211,26 +282,26 @@ struct ContentView: View {
                     .background(Color.black)
                     .clipShape(RoundedRectangle(cornerRadius: 10))
                     .overlay(RoundedRectangle(cornerRadius: 10).stroke(.white.opacity(0.12), lineWidth: 1))
-                Text("预览框 = 你的屏幕（\(Int(screenSize.width)) × \(Int(screenSize.height))）；框外的部分不会显示")
+                Text(tr("预览框 = 你的屏幕（\(Int(screenSize.width)) × \(Int(screenSize.height))）；框外的部分不会显示", "Preview frame = your screen (\(Int(screenSize.width)) × \(Int(screenSize.height))); anything outside it won't be shown"))
                     .font(.system(size: 10)).foregroundStyle(.white.opacity(0.38))
             }.frame(maxWidth: .infinity)
 
             VStack(alignment: .leading, spacing: 12) {
-                Text("画面校准").font(.system(size: 13, weight: .bold))
-                Picker("比例", selection: modeBinding) {
+                Text(tr("画面校准", "Calibration")).font(.system(size: 13, weight: .bold))
+                Picker(tr("比例", "Scaling"), selection: modeBinding) {
                     ForEach(WallpaperScaleMode.allCases) { Text($0.title).tag($0) }
                 }.pickerStyle(.segmented).labelsHidden()
-                sliderRow("缩放", $library.zoom, 0.5...3, String(format: "%.2f×", library.zoom))
-                sliderRow("水平位置", $library.offsetX, -0.5...0.5, String(format: "%+.0f%%", library.offsetX * 100))
-                sliderRow("垂直位置", $library.offsetY, -0.5...0.5, String(format: "%+.0f%%", library.offsetY * 100))
+                sliderRow(tr("缩放", "Zoom"), $library.zoom, 0.5...3, String(format: "%.2f×", library.zoom))
+                sliderRow(tr("水平位置", "Horizontal"), $library.offsetX, -0.5...0.5, String(format: "%+.0f%%", library.offsetX * 100))
+                sliderRow(tr("垂直位置", "Vertical"), $library.offsetY, -0.5...0.5, String(format: "%+.0f%%", library.offsetY * 100))
                 HStack(spacing: 9) {
                     Button { library.resetCalibration() } label: {
-                        Label("重置", systemImage: "arrow.counterclockwise")
+                        Label(tr("重置", "Reset"), systemImage: "arrow.counterclockwise")
                             .font(.system(size: 11, weight: .semibold)).padding(.horizontal, 12).padding(.vertical, 9)
                             .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
                     }.buttonStyle(.plain)
                     Button { library.applySelected() } label: {
-                        Label("应用校准", systemImage: "checkmark.circle.fill")
+                        Label(tr("应用校准", "Apply"), systemImage: "checkmark.circle.fill")
                             .font(.system(size: 11, weight: .semibold)).padding(.horizontal, 12).padding(.vertical, 9)
                             .background(LinearGradient(colors: [.blue, .purple], startPoint: .leading, endPoint: .trailing), in: RoundedRectangle(cornerRadius: 10))
                     }.buttonStyle(.plain)
@@ -288,11 +359,11 @@ struct ContentView: View {
             HStack(spacing: 18) {
                 ZStack { RoundedRectangle(cornerRadius: 16).fill(.white.opacity(0.08)); Image(systemName: "arrow.up.doc.fill").font(.system(size: 25)).foregroundStyle(.cyan) }.frame(width: 60, height: 60)
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("把你的灵感加入图库").font(.system(size: 16, weight: .bold))
-                    Text("支持常见图片与视频格式 · 自动保存在本机").font(.system(size: 11)).foregroundStyle(.white.opacity(0.48))
+                    Text(tr("把你的灵感加入图库", "Add your inspiration to the library")).font(.system(size: 16, weight: .bold))
+                    Text(tr("支持常见图片与视频格式 · 自动保存在本机", "Common image and video formats supported · saved locally")).font(.system(size: 11)).foregroundStyle(.white.opacity(0.48))
                 }
                 Spacer()
-                Text("选择文件").font(.system(size: 12, weight: .semibold)).padding(.horizontal, 14).padding(.vertical, 10).background(.white.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+                Text(tr("选择文件", "Choose files")).font(.system(size: 12, weight: .semibold)).padding(.horizontal, 14).padding(.vertical, 10).background(.white.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
             }.padding(18).background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 18)).overlay(RoundedRectangle(cornerRadius: 18).stroke(.white.opacity(0.08), lineWidth: 1))
         }.buttonStyle(.plain)
     }
@@ -303,8 +374,8 @@ struct ContentView: View {
                 WallpaperArtwork(item: item).frame(height: 190).clipShape(RoundedRectangle(cornerRadius: 16))
                 LinearGradient(colors: [.clear, .black.opacity(0.55)], startPoint: .center, endPoint: .bottom).clipShape(RoundedRectangle(cornerRadius: 16))
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(item.title).font(.system(size: 18, weight: .bold))
-                    Text(item.kind == .video ? "VIDEO · 视频预览" : item.kind == .image ? "YOUR COLLECTION · 我的上传" : "CURATED WALLPAPER · 精选壁纸")
+                    Text(item.displayTitle).font(.system(size: 18, weight: .bold))
+                    Text(item.kind == .video ? tr("VIDEO · 视频预览", "VIDEO · PREVIEW") : item.kind == .image ? tr("YOUR COLLECTION · 我的上传", "YOUR COLLECTION") : tr("CURATED WALLPAPER · 精选壁纸", "CURATED WALLPAPER"))
                         .font(.system(size: 9, weight: .bold, design: .monospaced)).tracking(1).foregroundStyle(.white.opacity(0.7))
                 }.padding(17)
                 if item.kind == .video, let url = item.fileURL {
@@ -312,18 +383,18 @@ struct ContentView: View {
                 }
             }.frame(maxWidth: .infinity).frame(height: 190)
             VStack(alignment: .leading, spacing: 12) {
-                Text("桌面预览").font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.48))
-                Text(item.title).font(.system(size: 21, weight: .bold, design: .rounded))
-                Text(item.kind == .video ? "已保存的视频，可在这里预览。" : "应用后会替换当前桌面壁纸。你可以随时恢复原来的桌面。")
+                Text(tr("桌面预览", "Desktop preview")).font(.system(size: 11, weight: .semibold)).foregroundStyle(.white.opacity(0.48))
+                Text(item.displayTitle).font(.system(size: 21, weight: .bold, design: .rounded))
+                Text(item.kind == .video ? tr("已保存的视频，可在这里预览。", "A saved video — preview it here.") : tr("应用后会替换当前桌面壁纸。你可以随时恢复原来的桌面。", "Applying replaces your current desktop wallpaper. You can restore the original anytime."))
                     .font(.system(size: 11)).foregroundStyle(.white.opacity(0.5)).fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
                 HStack(spacing: 9) {
                     Button { library.applySelected() } label: {
-                        Label(item.kind == .video ? "应用到桌面" : "设为桌面壁纸", systemImage: "checkmark.circle.fill")
+                        Label(item.kind == .video ? tr("应用到桌面", "Apply to desktop") : tr("设为桌面壁纸", "Set as Wallpaper"), systemImage: "checkmark.circle.fill")
                             .font(.system(size: 11, weight: .semibold)).padding(.horizontal, 13).padding(.vertical, 10)
                             .background(LinearGradient(colors: [.blue, .purple], startPoint: .leading, endPoint: .trailing), in: RoundedRectangle(cornerRadius: 10))
                     }.buttonStyle(.plain)
-                    Button { showingImporter = true } label: { Image(systemName: "plus").font(.system(size: 12, weight: .bold)).padding(10).background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 10)) }.buttonStyle(.plain).help("上传更多照片或视频")
+                    Button { showingImporter = true } label: { Image(systemName: "plus").font(.system(size: 12, weight: .bold)).padding(10).background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 10)) }.buttonStyle(.plain).help(tr("上传更多照片或视频", "Upload more photos or videos"))
                 }
             }.frame(width: 245, alignment: .leading).padding(.vertical, 4)
         }.padding(16).background(.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 21)).overlay(RoundedRectangle(cornerRadius: 21).stroke(.white.opacity(0.07), lineWidth: 1))
@@ -336,6 +407,7 @@ struct WallpaperCard: View {
     let active: Bool
     var onDelete: (() -> Void)? = nil
     let action: () -> Void
+    @AppStorage("Lumi.language") private var language = "zh"   // 语言切换时刷新卡片
 
     var body: some View {
         Button(action: action) {
@@ -343,13 +415,13 @@ struct WallpaperCard: View {
                 ZStack(alignment: .topLeading) {
                     WallpaperArtwork(item: item).frame(height: 125).clipShape(RoundedRectangle(cornerRadius: 12))
                     if item.kind == .video { Image(systemName: "play.fill").font(.system(size: 12)).padding(8).background(.black.opacity(0.45), in: Circle()).padding(9).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing) }
-                    if active { Text("使用中").font(.system(size: 9, weight: .bold)).padding(.horizontal, 8).padding(.vertical, 5).background(.green.opacity(0.85), in: Capsule()).padding(9) }
+                    if active { Text(tr("使用中", "In use")).font(.system(size: 9, weight: .bold)).padding(.horizontal, 8).padding(.vertical, 5).background(.green.opacity(0.85), in: Capsule()).padding(9) }
                 }
                 HStack(spacing: 9) {
                     Image(systemName: item.symbol).font(.system(size: 14)).foregroundStyle(item.palette.first ?? .cyan).frame(width: 30, height: 30).background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 9))
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(item.title).font(.system(size: 12, weight: .semibold)).lineLimit(1)
-                        Text(item.kind == .builtIn ? "精选壁纸" : item.kind == .video ? "我的视频" : "我的照片").font(.system(size: 10)).foregroundStyle(.white.opacity(0.4))
+                        Text(item.displayTitle).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                        Text(item.kind == .builtIn ? (item.category.isEmpty ? tr("精选壁纸", "Featured") : localizedCategory(item.category)) : item.kind == .video ? tr("我的视频", "My video") : tr("我的照片", "My photo")).font(.system(size: 10)).foregroundStyle(.white.opacity(0.4))
                     }
                     Spacer(minLength: 0)
                     if selected { Image(systemName: "checkmark.circle.fill").foregroundStyle(.cyan).font(.system(size: 16)) }
@@ -368,7 +440,7 @@ struct WallpaperCard: View {
                         .overlay(Circle().stroke(.white.opacity(0.2), lineWidth: 1))
                 }
                 .buttonStyle(.plain)
-                .help("删除")
+                .help(tr("删除", "Delete"))
                 .padding(.top, 17).padding(.trailing, 17)
             }
         }
@@ -377,11 +449,16 @@ struct WallpaperCard: View {
 
 /// 图片缓存：卡片、预览、校准滑块拖动时会反复读取同一张图，缓存后就不会卡。
 enum ImageCache {
-    private static let cache = NSCache<NSURL, NSImage>()
+    // 缩略图是 1920 宽的高清图，限制缓存总量，避免内存占用过大
+    private static let cache: NSCache<NSURL, NSImage> = {
+        let c = NSCache<NSURL, NSImage>()
+        c.totalCostLimit = 300 * 1024 * 1024
+        return c
+    }()
     static func image(for url: URL) -> NSImage? {
         if let hit = cache.object(forKey: url as NSURL) { return hit }
         guard let img = NSImage(contentsOf: url) else { return nil }
-        cache.setObject(img, forKey: url as NSURL)
+        cache.setObject(img, forKey: url as NSURL, cost: Int(img.size.width * img.size.height * 4))
         return img
     }
 }
